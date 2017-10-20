@@ -8,14 +8,16 @@ open React;
 
 module Util = General_util;
 
-let make_palette ((rs, rf): Model.rp) => {
+let performAction ((rs, rf): Model.rp) action =>
+  switch (Action.performSyn () Ctx.empty action (React.S.value rs)) {
+  | Some x => rf x
+  | None => ()
+  };
+
+let make_palette ((rs, rf): Model.rp) are_actions_enabled_rs => {
   /* start by defining a bunch of helpers */
   /* performs the top-level action and updates the signal */
-  let doAction action =>
-    switch (Action.performSyn () Ctx.empty action (React.S.value rs)) {
-    | Some x => rf x
-    | None => ()
-    };
+  let doAction = performAction (rs, rf);
   module KC = Js_util.KeyCombo;
   module KCs = Js_util.KeyCombos;
   /* helper function for constructing action buttons with no textbox */
@@ -26,7 +28,10 @@ let make_palette ((rs, rf): Model.rp) => {
         Dom_html.document
         (
           fun evt =>
-            if (Js_util.get_keyCode evt == KC.keyCode key_combo) {
+            if (
+              Js_util.get_keyCode evt == KC.keyCode key_combo &&
+              React.S.value are_actions_enabled_rs
+            ) {
               doAction action
             } else {
               ()
@@ -45,15 +50,18 @@ let make_palette ((rs, rf): Model.rp) => {
           R.filter_attrib
             (a_disabled ())
             (
-              S.map
+              S.l2
                 (
-                  fun m =>
-                    switch (Action.performSyn () Ctx.empty action m) {
-                    | Some _ => false
-                    | None => true
-                    }
+                  fun m enabled =>
+                    not enabled || (
+                      switch (Action.performSyn () Ctx.empty action m) {
+                      | Some _ => false
+                      | None => true
+                      }
+                    )
                 )
                 rs
+                are_actions_enabled_rs
             )
         ]
         [pcdata (btn_label ^ " [" ^ KC.to_string key_combo ^ "]")]
@@ -121,7 +129,7 @@ let make_palette ((rs, rf): Model.rp) => {
           fun evt => {
             let evt_key = Js_util.get_keyCode evt;
             /* let _ = Firebug.console##log evt_key in */
-            if (evt_key == KC.keyCode key_combo) {
+            if (evt_key == KC.keyCode key_combo && React.S.value are_actions_enabled_rs) {
               i_dom##focus;
               Dom_html.stopPropagation evt;
               Js._false
@@ -236,8 +244,7 @@ let make_palette ((rs, rf): Model.rp) => {
         (
           fun evt => {
             let evt_key = Js_util.get_keyCode evt;
-            if (evt_key == KC.keyCode key_combo) {
-              Firebug.console##log "in c";
+            if (evt_key == KC.keyCode key_combo && React.S.value are_actions_enabled_rs) {
               i_dom_1##focus;
               Dom_html.stopPropagation evt;
               Js._false

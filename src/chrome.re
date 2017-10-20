@@ -4,22 +4,105 @@ open Tyxml_js;
 
 open Semantics.Core;
 
+module UText = CamomileLibrary.UText;
+
+module Util = General_util;
+
+type projMode =
+  | HZ
+  | Textual
+  | Shadow;
+
 let view ((rs, rf): Model.rp) => {
   /* pp view */
   let pp_view_width = 50;
-  let pp_rs =
+  let (proj_view_state_rs, proj_view_state_rf) = React.S.create None;
+  let expr_sdoc_rs =
+    React.S.map
+      (fun ((zexp, _), _) => Pretty.PP.sdoc_of_doc pp_view_width (PPView.of_zexp zexp)) rs;
+  let utext_of_expr_rs =
+    React.S.map (Util.compose UText.of_string Pretty.PP.string_of_sdoc) expr_sdoc_rs;
+  let proj_mode_rs =
+    React.S.l2
+      (
+        fun proj_view_state utext_of_expr =>
+          switch proj_view_state {
+          | None => HZ
+          | Some (txt, index) => UText.compare txt utext_of_expr == 0 ? Textual : Shadow
+          }
+      )
+      proj_view_state_rs
+      utext_of_expr_rs;
+  Js_util.listen_to
+        Dom_html.Event.keypress
+        Dom_html.document
+        (
+          fun evt => {
+            let evt_key = Js_util.get_keyCode evt;
+            let is_shift = evt##.shiftKey;
+            if (is_shift && evt_key == Js_util.KeyCombo.keyCode Js_util.KeyCombos.enter) {
+                      switch (React.S.value proj_mode_rs) {
+                              /* TODO: set the proper index, instead of just 0 */
+                      | HZ => proj_view_state_rf (Some (React.S.value utext_of_expr_rs, 0))
+                      | Textual => proj_view_state_rf None
+                      | Shadow => proj_view_state_rf None
+                      };
+              Dom_html.stopPropagation evt;
+              Js._false
+            } else {
+              Js._true
+            }
+          }
+        );
+  let expr_view_styles_rs =
     React.S.map
       (
-        fun ((zexp, _), _) => {
-          let prettified =
-            Pretty.HTML_Of_SDoc.html_of_sdoc (
-              Pretty.PP.sdoc_of_doc pp_view_width (PPView.of_zexp zexp)
-            );
-          [prettified]
-        }
+        fun
+        | HZ => ["ModelExpHZ"]
+        | Textual => ["ModelExpTextual"]
+        | Shadow => ["ModelExpShadow"]
       )
-      rs;
-  let pp_view = R.Html5.div (ReactiveData.RList.from_signal pp_rs);
+      proj_mode_rs;
+  let are_actions_enabled_rs =
+    React.S.map
+      (
+        fun
+        | HZ => true
+        | Textual => false
+        | Shadow => false
+      )
+      proj_mode_rs;
+  let expr_proj_view_rs =
+    React.S.map
+      (
+        fun sdoc => /* [
+          Html5.(
+            div
+              a::[
+                a_tabindex 0,
+                a_onkeypress (
+                  fun evt => {
+                    let evt_key = Js_util.get_keyCode evt;
+                    if (evt_key == Js_util.KeyCombo.keyCode Js_util.KeyCombos.enter) {
+                      switch (React.S.value proj_mode_rs) {
+                      | HZ => proj_view_state_rf (Some (React.S.value utext_of_expr_rs, 0))
+                      | Textual => proj_view_state_rf (Some (UText.of_string " dog", 0))
+                      | Shadow => proj_view_state_rf None
+                      };
+                      false
+                    } else {
+                      true
+                    }
+                  }
+                )
+              ]
+              */
+              [Pretty.HTML_Of_SDoc.html_of_sdoc sdoc]
+         /* )
+        ] */
+      )
+      expr_sdoc_rs;
+  let expr_proj_view_rhtml = R.Html5.div (ReactiveData.RList.from_signal expr_proj_view_rs);
   /* htype view */
   let htype_rs =
     React.S.map
@@ -96,7 +179,7 @@ let view ((rs, rf): Model.rp) => {
                         p [
                           pcdata "Hazel is an experimental structure editor for a simple typed expression language."
                         ],
-                        div a::[a_class ["ModelExp"]] [pp_view],
+                        div a::[R.Html5.a_class expr_view_styles_rs] [expr_proj_view_rhtml],
                         div
                           a::[a_class ["cell-status"]]
                           [
@@ -114,7 +197,7 @@ let view ((rs, rf): Model.rp) => {
                 div
                   a::[a_class ["sidebar"]]
                   [
-                    Action_palette.make_palette (rs, rf),
+                    Action_palette.make_palette (rs, rf) are_actions_enabled_rs,
                     div a::[a_class ["panel-title"]] [pcdata "Options"],
                     show_hole_names_checkbox,
                     show_hole_envs_checkbox
