@@ -65,8 +65,16 @@ module KeyCombo: {
 
 module KeyCombos = {
   let _kc = KeyCombo.make;
+  let newline = _kc "Newline" 10;
   let enter = _kc "Enter" 13;
   let esc = _kc "Esc" 27;
+  let backspace = _kc "Backspace" 8;
+  let del = _kc "Del" 127;
+  /* TODO!!!! Keycode is for keys, on up or down, and the codes for arrow keys overlap w/ ascii characters */
+  let left = _kc "Left" 37;
+  let up = _kc "Up" 38;
+  let right = _kc "Right" 39;
+  let down = _kc "Down" 40;
   let number_1 = _kc "1" 49;
   let number_2 = _kc "2" 50;
   let number_3 = _kc "3" 51;
@@ -87,6 +95,7 @@ module KeyCombos = {
   let c = _kc "c" 99;
   let qmark = _kc "?" 63;
   let equals = _kc "=" 61;
+  let open_bracket = _kc "[" 91;
 };
 
 let get_keyCode (evt: Js.t Dom_html.keyboardEvent) =>

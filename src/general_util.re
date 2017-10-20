@@ -5,3 +5,5 @@ let force_opt opt =>
   };
 
 let compose f g a => f (g a);
+
+let const a b => a;

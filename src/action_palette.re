@@ -14,7 +14,15 @@ let performAction ((rs, rf): Model.rp) action =>
   | None => ()
   };
 
-let make_palette ((rs, rf): Model.rp) are_actions_enabled_rs => {
+let make_palette
+    ((rs, rf): Model.rp)
+    are_actions_enabled_rs
+    :(Html5.elt 'a, Hashtbl.t int (Js.t Dom_html.keyboardEvent => Js.t bool)) => {
+  let char_codes_to_evt_handlers = Hashtbl.create 256;
+  let add_safe char_code evt_handler => {
+    assert (not (Hashtbl.mem char_codes_to_evt_handlers char_code));
+    Hashtbl.add char_codes_to_evt_handlers char_code evt_handler
+  };
   /* start by defining a bunch of helpers */
   /* performs the top-level action and updates the signal */
   let doAction = performAction (rs, rf);
@@ -22,21 +30,14 @@ let make_palette ((rs, rf): Model.rp) are_actions_enabled_rs => {
   module KCs = Js_util.KeyCombos;
   /* helper function for constructing action buttons with no textbox */
   let action_button action btn_label key_combo => {
-    let _ =
-      Js_util.listen_to_t
-        Ev.keypress
-        Dom_html.document
-        (
-          fun evt =>
-            if (
-              Js_util.get_keyCode evt == KC.keyCode key_combo &&
-              React.S.value are_actions_enabled_rs
-            ) {
-              doAction action
-            } else {
-              ()
-            }
-        );
+    add_safe
+      (KC.keyCode key_combo)
+      (
+        fun evt => {
+          doAction action;
+          Js._true
+        }
+      );
     Html5.(
       button
         a::[
@@ -121,23 +122,15 @@ let make_palette ((rs, rf): Model.rp) are_actions_enabled_rs => {
       );
     let button_dom = To_dom.of_button button_elt;
     /* listen for the key combo at the document level */
-    let _ =
-      Js_util.listen_to
-        Ev.keypress
-        Dom_html.document
-        (
-          fun evt => {
-            let evt_key = Js_util.get_keyCode evt;
-            /* let _ = Firebug.console##log evt_key in */
-            if (evt_key == KC.keyCode key_combo && React.S.value are_actions_enabled_rs) {
-              i_dom##focus;
-              Dom_html.stopPropagation evt;
-              Js._false
-            } else {
-              Js._true
-            }
-          }
-        );
+    add_safe
+      (KC.keyCode key_combo)
+      (
+        fun evt => {
+          i_dom##focus;
+          Dom_html.stopPropagation evt;
+          Js._false
+        }
+      );
     /* respond to enter and esc inside the input box */
     let _ =
       Js_util.listen_to
@@ -237,22 +230,15 @@ let make_palette ((rs, rf): Model.rp) are_actions_enabled_rs => {
           [pcdata (btn_label ^ " [" ^ KC.to_string key_combo ^ "]")]
       );
     let button_dom = To_dom.of_button button_elt;
-    let _ =
-      Js_util.listen_to
-        Ev.keypress
-        Dom_html.document
-        (
-          fun evt => {
-            let evt_key = Js_util.get_keyCode evt;
-            if (evt_key == KC.keyCode key_combo && React.S.value are_actions_enabled_rs) {
-              i_dom_1##focus;
-              Dom_html.stopPropagation evt;
-              Js._false
-            } else {
-              Js._true
-            }
-          }
-        );
+    add_safe
+      (KC.keyCode key_combo)
+      (
+        fun evt => {
+          i_dom_1##focus;
+          Dom_html.stopPropagation evt;
+          Js._false
+        }
+      );
     let i_keyup_listener i_dom =>
       Js_util.listen_to
         Ev.keyup
@@ -468,15 +454,18 @@ let make_palette ((rs, rf): Model.rp) are_actions_enabled_rs => {
         ]
     );
   /* finally, put it all together into the action palette */
-  Html5.(
-    div
-      a::[a_class ["action-palette"]]
-      [
-        movementActions,
-        typeConstructionActions,
-        expressionConstructionActions,
-        deleteActions,
-        finishingActions
-      ]
+  (
+    Html5.(
+      div
+        a::[a_class ["action-palette"]]
+        [
+          movementActions,
+          typeConstructionActions,
+          expressionConstructionActions,
+          deleteActions,
+          finishingActions
+        ]
+    ),
+    char_codes_to_evt_handlers
   )
 };

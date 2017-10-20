@@ -8,98 +8,246 @@ module UText = CamomileLibrary.UText;
 
 module Util = General_util;
 
-type projMode =
+module TextBox: {
+  type t;
+  type action =
+    | Insert char
+    | Backspace
+    | Del
+    | Left
+    | Up
+    | Right
+    | Down;
+  let create: UText.t => int => t;
+  let getUText: t => UText.t;
+  let getIndex: t => int;
+  let performAction: t => action => t;
+} = {
+  type t = (UText.t, int);
+  type action =
+    | Insert char
+    | Backspace
+    | Del
+    | Left
+    | Up
+    | Right
+    | Down;
+  let create uTxt ind => (uTxt, ind);
+  let getUText (uTxt, ind) => uTxt;
+  let getIndex (uTxt, ind) => ind;
+  let uSubstr s start end_ => UText.sub s start (end_ - start);
+  let text_info_insert uTxt ind chr => {
+    let len = UText.length uTxt;
+    let newUChar = CamomileLibrary.UChar.of_char chr;
+    let newUStr = UText.init 1 (Util.const newUChar);
+    (UText.append (UText.append (uSubstr uTxt 0 ind) newUStr) (uSubstr uTxt ind len), ind + 1)
+  };
+  let is_newline uTxt ind => CamomileLibrary.UChar.char_of (UText.get uTxt ind) == '\n';
+  let get_col uTxt ind => {
+    let rec get_col_ acc i => i == 0 || is_newline uTxt (i - 1) ? acc : get_col_ (acc + 1) (i - 1);
+    get_col_ 0 ind
+  };
+  let get_row uTxt ind => {
+    let rec nl_count acc i =>
+      i == ind ? acc : nl_count (is_newline uTxt i ? acc + 1 : acc) (i + 1);
+    nl_count 0 0
+  };
+  let performAction tbox action => {
+    let (uTxt, ind) = tbox;
+    let len = UText.length uTxt;
+    switch action {
+    | Insert c => text_info_insert uTxt ind c
+    | Backspace =>
+      ind == 0 ?
+        (uTxt, ind) :
+        (UText.append (uSubstr uTxt 0 (ind - 1)) (uSubstr uTxt ind (UText.length uTxt)), ind - 1)
+    | Del =>
+      ind == len ?
+        (uTxt, ind) : (UText.append (uSubstr uTxt 0 ind) (uSubstr uTxt (ind + 1) len), ind)
+    | Left => (uTxt, max 0 (ind - 1))
+    | Right => (uTxt, min (UText.length uTxt) (ind + 1))
+    | Up =>
+      let col = get_col uTxt ind;
+      let prev_row_last = ind - col - 1;
+      (
+        uTxt,
+        if (prev_row_last < 0) {
+          ind
+        } else {
+          let prev_row_len = get_col uTxt prev_row_last;
+          prev_row_last - prev_row_len + min col prev_row_len
+        }
+      )
+    | Down =>
+      let col = get_col uTxt ind;
+      let rec get_row_end i => i == len || is_newline uTxt i ? i : get_row_end (i + 1);
+      let next_row_start = 1 + get_row_end ind;
+      (
+        uTxt,
+        if (next_row_start > len) {
+          ind
+        } else {
+          let next_row_end = get_row_end next_row_start;
+          min (next_row_start + col) next_row_end
+        }
+      )
+    }
+  };
+};
+
+type projState =
   | HZ
-  | Textual
-  | Shadow;
+  | Textual TextBox.t
+  | Shadow TextBox.t TextBox.t;
+
+type projStateAction =
+  | TextAction TextBox.action
+  | Toggle
+  | DitchShadow;
 
 let view ((rs, rf): Model.rp) => {
   /* pp view */
   let pp_view_width = 50;
-  let (proj_view_state_rs, proj_view_state_rf) = React.S.create None;
   let expr_sdoc_rs =
     React.S.map
       (fun ((zexp, _), _) => Pretty.PP.sdoc_of_doc pp_view_width (PPView.of_zexp zexp)) rs;
   let utext_of_expr_rs =
     React.S.map (Util.compose UText.of_string Pretty.PP.string_of_sdoc) expr_sdoc_rs;
-  let proj_mode_rs =
-    React.S.l2
-      (
-        fun proj_view_state utext_of_expr =>
-          switch proj_view_state {
-          | None => HZ
-          | Some (txt, index) => UText.compare txt utext_of_expr == 0 ? Textual : Shadow
-          }
-      )
-      proj_view_state_rs
-      utext_of_expr_rs;
-  Js_util.listen_to
-        Dom_html.Event.keypress
-        Dom_html.document
-        (
-          fun evt => {
-            let evt_key = Js_util.get_keyCode evt;
-            let is_shift = evt##.shiftKey;
-            if (is_shift && evt_key == Js_util.KeyCombo.keyCode Js_util.KeyCombos.enter) {
-                      switch (React.S.value proj_mode_rs) {
-                              /* TODO: set the proper index, instead of just 0 */
-                      | HZ => proj_view_state_rf (Some (React.S.value utext_of_expr_rs, 0))
-                      | Textual => proj_view_state_rf None
-                      | Shadow => proj_view_state_rf None
-                      };
-              Dom_html.stopPropagation evt;
-              Js._false
-            } else {
-              Js._true
-            }
-          }
-        );
+  let (proj_view_state_rs, proj_view_state_rf) = React.S.create HZ;
+  let state_after_update cur_state state_action utext_of_expr => {
+    /* TODO: does_it_match actually needs to return false if the tbox index isn't in a valid place. in this case, it should also tell us what HZ action to perform in order
+       to appropriately update the hexp */
+    let does_it_match tbox => UText.compare (TextBox.getUText tbox) utext_of_expr == 0;
+    let assert_matches tbox => {
+      assert (does_it_match tbox);
+      tbox
+    };
+    let update_view last_valid_tbox cur_tbox =>
+      switch state_action {
+      | TextAction a =>
+        let tbox_after_action = TextBox.performAction cur_tbox a;
+        does_it_match tbox_after_action ?
+          Textual tbox_after_action : Shadow (assert_matches last_valid_tbox) tbox_after_action
+      | Toggle => HZ
+      | DitchShadow => Textual (assert_matches last_valid_tbox)
+      };
+    switch cur_state {
+    | HZ =>
+      switch state_action {
+      /* TODO set the proper index, not just 0 */
+      | Toggle => Textual (assert_matches (TextBox.create utext_of_expr 0))
+      | _ => HZ
+      }
+    | Textual tbox => update_view tbox tbox
+    | Shadow last_valid_tbox tbox => update_view last_valid_tbox tbox
+    }
+  };
+  let perform_view_action a =>
+    proj_view_state_rf (
+      state_after_update (React.S.value proj_view_state_rs) a (React.S.value utext_of_expr_rs)
+    );
   let expr_view_styles_rs =
     React.S.map
       (
         fun
         | HZ => ["ModelExpHZ"]
-        | Textual => ["ModelExpTextual"]
-        | Shadow => ["ModelExpShadow"]
+        | Textual _ => ["ModelExpTextual"]
+        | Shadow _ _ => ["ModelExpShadow"]
       )
-      proj_mode_rs;
+      proj_view_state_rs;
   let are_actions_enabled_rs =
     React.S.map
       (
         fun
         | HZ => true
-        | Textual => false
-        | Shadow => false
+        | Textual _ => false
+        | Shadow _ _ => false
       )
-      proj_mode_rs;
+      proj_view_state_rs;
+  let (action_palette, hz_action_evt_handlers) =
+    Action_palette.make_palette (rs, rf) are_actions_enabled_rs;
+  let _ =
+    Js_util.listen_to
+      Dom_html.Event.keypress
+      Dom_html.document
+      (
+        fun evt => {
+          let evt_key = Js_util.get_keyCode evt;
+          let is_shift = Js.to_bool evt##.shiftKey;
+          let is_ctrl = Js.to_bool evt##.ctrlKey;
+          let kcd = Js_util.KeyCombo.keyCode;
+          module KCs = Js_util.KeyCombos;
+          let perform_view_action_f a => {
+            perform_view_action a;
+            Js._false
+          };
+          if is_ctrl {
+            Firebug.console##log evt_key;
+            Js._false
+          } else if (
+            is_shift && evt_key == kcd KCs.enter
+          ) {
+            perform_view_action_f Toggle
+          } else if (
+            Hashtbl.mem hz_action_evt_handlers evt_key && React.S.value are_actions_enabled_rs
+          ) {
+            Hashtbl.find hz_action_evt_handlers evt_key evt
+          } else if (
+            evt_key == kcd KCs.esc || is_ctrl && evt_key == kcd KCs.open_bracket
+          ) {
+            Firebug.console##log "pressed escape";
+            perform_view_action_f DitchShadow
+          } else if (
+            evt_key == kcd KCs.backspace
+          ) {
+            Firebug.console##log "pressed backspace";
+            perform_view_action_f (TextAction TextBox.Backspace)
+          } else if (
+            evt_key == kcd KCs.del
+          ) {
+            perform_view_action_f (TextAction TextBox.Del)
+          } else if (
+            evt_key == kcd KCs.newline || evt_key == kcd KCs.enter
+          ) {
+            perform_view_action_f (TextAction (TextBox.Insert '\n'))
+          } else if (
+            evt_key > 31 && evt_key < 128
+          ) {
+            perform_view_action_f (TextAction (TextBox.Insert (Char.chr evt_key)))
+          } else {
+            Js._true
+          }
+        }
+      );
   let expr_proj_view_rs =
     React.S.map
       (
-        fun sdoc => /* [
-          Html5.(
-            div
-              a::[
-                a_tabindex 0,
-                a_onkeypress (
-                  fun evt => {
-                    let evt_key = Js_util.get_keyCode evt;
-                    if (evt_key == Js_util.KeyCombo.keyCode Js_util.KeyCombos.enter) {
-                      switch (React.S.value proj_mode_rs) {
-                      | HZ => proj_view_state_rf (Some (React.S.value utext_of_expr_rs, 0))
-                      | Textual => proj_view_state_rf (Some (UText.of_string " dog", 0))
-                      | Shadow => proj_view_state_rf None
-                      };
-                      false
-                    } else {
-                      true
-                    }
-                  }
-                )
-              ]
-              */
-              [Pretty.HTML_Of_SDoc.html_of_sdoc sdoc]
-         /* )
-        ] */
+        fun sdoc =>
+          /* [
+             Html5.(
+               div
+                 a::[
+                   a_tabindex 0,
+                   a_onkeypress (
+                     fun evt => {
+                       let evt_key = Js_util.get_keyCode evt;
+                       if (evt_key == Js_util.KeyCombo.keyCode Js_util.KeyCombos.enter) {
+                         switch (React.S.value proj_mode_rs) {
+                         | HZ => proj_view_state_rf (Some (React.S.value utext_of_expr_rs, 0))
+                         | Textual => proj_view_state_rf (Some (UText.of_string " dog", 0))
+                         | Shadow => proj_view_state_rf None
+                         };
+                         false
+                       } else {
+                         true
+                       }
+                     }
+                   )
+                 ]
+                 */
+          [Pretty.HTML_Of_SDoc.html_of_sdoc sdoc]
+          /* )
+             ] */
       )
       expr_sdoc_rs;
   let expr_proj_view_rhtml = R.Html5.div (ReactiveData.RList.from_signal expr_proj_view_rs);
@@ -197,7 +345,7 @@ let view ((rs, rf): Model.rp) => {
                 div
                   a::[a_class ["sidebar"]]
                   [
-                    Action_palette.make_palette (rs, rf) are_actions_enabled_rs,
+                    action_palette,
                     div a::[a_class ["panel-title"]] [pcdata "Options"],
                     show_hole_names_checkbox,
                     show_hole_envs_checkbox
