@@ -125,7 +125,11 @@ module PP: {
         let after = substr next_byte_ind byte_len;
         SText before (cursor cursor_char (SText after x'))
       } else {
-        SText s (sdoc_with_text_cursor x' (tc_ind - s_len))
+        /* TODO if tc_ind == s_len, but x' doesn't contain any text (e.g. it's SEmpty),
+           then the cursor is at the very last position and we should return
+           (SText s (cursor " " x'))*/
+        SText
+          s (sdoc_with_text_cursor x' (tc_ind - s_len))
       }
     | STagStart tag x' => STagStart tag (sdoc_with_text_cursor x' tc_ind)
     | STagEnd x' => STagEnd (sdoc_with_text_cursor x' tc_ind)

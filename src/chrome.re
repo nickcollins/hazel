@@ -8,6 +8,12 @@ module UText = CamomileLibrary.UText;
 
 module Util = General_util;
 
+let is_newline uTxt ind => UText.get uTxt ind == CamomileLibrary.UChar.of_char '\n';
+
+let is_space uTxt ind => UText.get uTxt ind == CamomileLibrary.UChar.of_char ' ';
+
+let uSubstr s start end_ => UText.sub s start (end_ - start);
+
 module TextBox: {
   type t;
   type action =
@@ -35,14 +41,12 @@ module TextBox: {
   let create uTxt ind => (uTxt, ind);
   let getUText (uTxt, ind) => uTxt;
   let getIndex (uTxt, ind) => ind;
-  let uSubstr s start end_ => UText.sub s start (end_ - start);
   let text_info_insert uTxt ind chr => {
     let len = UText.length uTxt;
     let newUChar = CamomileLibrary.UChar.of_char chr;
     let newUStr = UText.init 1 (Util.const newUChar);
     (UText.append (UText.append (uSubstr uTxt 0 ind) newUStr) (uSubstr uTxt ind len), ind + 1)
   };
-  let is_newline uTxt ind => CamomileLibrary.UChar.char_of (UText.get uTxt ind) == '\n';
   let get_col uTxt ind => {
     let rec get_col_ acc i => i == 0 || is_newline uTxt (i - 1) ? acc : get_col_ (acc + 1) (i - 1);
     get_col_ 0 ind
@@ -234,64 +238,56 @@ let view ((rs, rf): Model.rp) => {
   let expr_proj_view_rs =
     React.S.l2
       (
-        fun sdoc proj_view_state =>
-          [
-            /* [
-               Html5.(
-                 div
-                   a::[
-                     a_tabindex 0,
-                     a_onkeypress (
-                       fun evt => {
-                         let evt_key = Js_util.get_keyCode evt;
-                         if (evt_key == Js_util.KeyCombo.keyCode Js_util.KeyCombos.enter) {
-                           switch (React.S.value proj_mode_rs) {
-                           | HZ => proj_view_state_rf (Some (React.S.value utext_of_expr_rs, 0))
-                           | Textual => proj_view_state_rf (Some (UText.of_string " dog", 0))
-                           | Shadow => proj_view_state_rf None
-                           };
-                           false
-                         } else {
-                           true
-                         }
-                       }
-                     )
-                   ]
-                   */
-            switch proj_view_state {
-            | HZ => Pretty.HTML_Of_SDoc.html_of_sdoc sdoc
-            | Textual tbox =>
-              Pretty.HTML_Of_SDoc.html_of_sdoc (
-                Pretty.PP.sdoc_with_text_cursor sdoc (TextBox.getIndex tbox)
-              )
-            | Shadow _ tbox =>
-              let uTxt = TextBox.getUText tbox;
-              let cInd = TextBox.getIndex tbox;
-              let to_string sInd eInd =>
-                CamomileLibrary.UTF8.init
-                  (eInd - sInd)
-                  (
-                    fun i => {
-                      let ind = sInd + i;
-                      assert (ind != cInd);
-                      UText.get uTxt ind
-                    }
-                  );
-              let cursor_string = CamomileLibrary.UTF8.init 1 (Util.const (UText.get uTxt cInd));
-              Html5.(
-                pre
-                  a::[a_class ["SDoc"]]
-                  [
-                    pcdata (to_string 0 cInd),
-                    span a::[a_class ["text-cursor"]] [pcdata cursor_string],
-                    pcdata (to_string (cInd + 1) (UText.length uTxt))
-                  ]
-              )
-            /*| Shadow _ tbox => Pretty.HTML_Of_SDoc.html_of_sdoc (Pretty.PP.sdoc_with_text_cursor sdoc (SText (Utext.to_string (TextBox.getUText tbox)) SEnd) (TextBox.getIndex tbox))*/
-            }
-          ]
-          /* )
-             ] */
+        fun sdoc proj_view_state => [
+          switch proj_view_state {
+          | HZ => Pretty.HTML_Of_SDoc.html_of_sdoc sdoc
+          | Textual tbox =>
+            Pretty.HTML_Of_SDoc.html_of_sdoc (
+              Pretty.PP.sdoc_with_text_cursor sdoc (TextBox.getIndex tbox)
+            )
+          | Shadow _ tbox =>
+            let uTxt = TextBox.getUText tbox;
+            let uTxt_len = UText.length uTxt;
+            let cursor_ind = TextBox.getIndex tbox;
+            let get_html cls str => Html5.(span a::[a_class [cls]] [pcdata str]);
+            let substr_to_html cls sInd eInd =>
+              get_html
+                cls (CamomileLibrary.UTF8.init (eInd - sInd) (fun i => UText.get uTxt (sInd + i)));
+            let cursor_html =
+              cursor_ind == uTxt_len || is_newline uTxt cursor_ind ?
+                get_html "text-cursor" " " :
+                substr_to_html "text-cursor" cursor_ind (cursor_ind + 1);
+            let rec to_html rev_result cls sInd curInd => {
+              let rev_result_ () => [substr_to_html cls sInd curInd, ...rev_result];
+              if (curInd == uTxt_len) {
+                List.rev (curInd == cursor_ind ? [cursor_html, ...rev_result_ ()] : rev_result_ ())
+              } else if (
+                curInd == cursor_ind
+              ) {
+                if (is_newline uTxt curInd) {
+                  to_html
+                    [Html5.br (), cursor_html, ...rev_result_ ()]
+                    "SIndentation"
+                    (curInd + 1)
+                    (curInd + 1)
+                } else {
+                  to_html [cursor_html, ...rev_result_ ()] cls (curInd + 1) (curInd + 1)
+                }
+              } else if (
+                is_newline uTxt curInd
+              ) {
+                to_html [Html5.br (), ...rev_result_ ()] "SIndentation" (curInd + 1) (curInd + 1)
+              } else if (
+                cls == "SIndentation" && not (is_space uTxt curInd)
+              ) {
+                to_html (rev_result_ ()) "SDoc" curInd curInd
+              } else {
+                to_html rev_result cls sInd (curInd + 1)
+              }
+            };
+            Html5.(span a::[a_class ["SDoc"]] (to_html [] "SDoc" 0 0))
+          }
+        ]
       )
       expr_sdoc_rs
       proj_view_state_rs;
