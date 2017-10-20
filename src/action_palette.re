@@ -17,21 +17,22 @@ let performAction ((rs, rf): Model.rp) action =>
 let make_palette
     ((rs, rf): Model.rp)
     are_actions_enabled_rs
-    :(Html5.elt 'a, Hashtbl.t int (Js.t Dom_html.keyboardEvent => Js.t bool)) => {
-  let char_codes_to_evt_handlers = Hashtbl.create 256;
-  let add_safe char_code evt_handler => {
-    assert (not (Hashtbl.mem char_codes_to_evt_handlers char_code));
-    Hashtbl.add char_codes_to_evt_handlers char_code evt_handler
-  };
+    :(Html5.elt 'a, Hashtbl.t string (Js.t Dom_html.keyboardEvent => Js.t bool)) => {
   /* start by defining a bunch of helpers */
-  /* performs the top-level action and updates the signal */
-  let doAction = performAction (rs, rf);
   module KC = Js_util.KeyCombo;
   module KCs = Js_util.KeyCombos;
+  let key_strings_to_evt_handlers = Hashtbl.create 64;
+  let add_safe key_combo evt_handler => {
+    let key_string = KC.to_string key_combo;
+    assert (not (Hashtbl.mem key_strings_to_evt_handlers key_string));
+    Hashtbl.add key_strings_to_evt_handlers key_string evt_handler
+  };
+  /* performs the top-level action and updates the signal */
+  let doAction = performAction (rs, rf);
   /* helper function for constructing action buttons with no textbox */
   let action_button action btn_label key_combo => {
     add_safe
-      (KC.keyCode key_combo)
+      key_combo
       (
         fun evt => {
           doAction action;
@@ -123,7 +124,7 @@ let make_palette
     let button_dom = To_dom.of_button button_elt;
     /* listen for the key combo at the document level */
     add_safe
-      (KC.keyCode key_combo)
+      key_combo
       (
         fun evt => {
           i_dom##focus;
@@ -155,15 +156,8 @@ let make_palette
         );
     /* stop propagation of keys when focus is in input box */
     let _ =
-      Js_util.listen_to
-        Ev.keypress
-        i_dom
-        (
-          fun evt => {
-            Dom_html.stopPropagation evt;
-            Js._true
-          }
-        );
+      Js_util.listen_to_all
+        [Ev.keydown, Ev.keypress] [i_dom] (Util.do_and_return Dom_html.stopPropagation Js._true);
     Html5.(
       div a::[a_class ["input-group"]] [span a::[a_class ["input-group-btn"]] [button_elt], i_elt]
     )
@@ -231,7 +225,7 @@ let make_palette
       );
     let button_dom = To_dom.of_button button_elt;
     add_safe
-      (KC.keyCode key_combo)
+      key_combo
       (
         fun evt => {
           i_dom_1##focus;
@@ -263,18 +257,11 @@ let make_palette
         );
     let _ = i_keyup_listener i_dom_1;
     let _ = i_keyup_listener i_dom_2;
-    let i_keypress_listener i_dom =>
-      Js_util.listen_to
-        Ev.keypress
-        i_dom
-        (
-          fun evt => {
-            Dom_html.stopPropagation evt;
-            Js._true
-          }
-        );
-    let _ = i_keypress_listener i_dom_1;
-    let _ = i_keypress_listener i_dom_2;
+    let _ =
+      Js_util.listen_to_all
+        [Ev.keydown, Ev.keypress]
+        [i_dom_1, i_dom_2]
+        (Util.do_and_return Dom_html.stopPropagation Js._true);
     Html5.(
       div
         a::[a_class ["input-group"]]
@@ -466,6 +453,6 @@ let make_palette
           finishingActions
         ]
     ),
-    char_codes_to_evt_handlers
+    key_strings_to_evt_handlers
   )
 };

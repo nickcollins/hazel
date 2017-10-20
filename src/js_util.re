@@ -4,6 +4,8 @@ open React;
 
 module Ev = Dom_html.Event;
 
+module Util = General_util;
+
 let forceGetElementById id => {
   let doc = Dom_html.document;
   Js.Opt.get (doc##getElementById (Js.string id)) (fun () => assert false)
@@ -11,16 +13,10 @@ let forceGetElementById id => {
 
 let listen_to ev elem f => Dom_html.addEventListener elem ev (Dom_html.handler f) Js._false;
 
-let listen_to_t ev elem f =>
-  listen_to
-    ev
-    elem
-    (
-      fun evt => {
-        f evt;
-        Js._true
-      }
-    );
+let listen_to_t ev elem f => listen_to ev elem (Util.do_and_return f Js._true);
+
+let listen_to_all evs elems f =>
+  List.iter (fun ev => List.iter (Util.doUnit (fun elem => listen_to ev elem f)) elems) evs;
 
 /* create an input and a reactive signal tracking its
  * string value */
@@ -54,6 +50,7 @@ let r_checkbox id label_str default_val => {
 module KeyCombo: {
   type t;
   let make: string => int => t;
+  /* Must be the same string that would be returned by keyboardEvent.key */
   let to_string: t => string;
   let keyCode: t => int;
 } = {
@@ -65,16 +62,17 @@ module KeyCombo: {
 
 module KeyCombos = {
   let _kc = KeyCombo.make;
-  let newline = _kc "Newline" 10;
   let enter = _kc "Enter" 13;
-  let esc = _kc "Esc" 27;
+  let esc = _kc "Escape" 27;
   let backspace = _kc "Backspace" 8;
-  let del = _kc "Del" 127;
-  /* TODO!!!! Keycode is for keys, on up or down, and the codes for arrow keys overlap w/ ascii characters */
-  let left = _kc "Left" 37;
-  let up = _kc "Up" 38;
-  let right = _kc "Right" 39;
-  let down = _kc "Down" 40;
+  let del = _kc "Delete" 127;
+  /* these codes overlap w/ ascii characters because the ascii codes are for keypress,
+     whereas these physical key codes are for keydown. But this is ok since we don't
+     use the codes anyways. */
+  let left = _kc "ArrowLeft" 37;
+  let up = _kc "ArrowUp" 38;
+  let right = _kc "ArrowRight" 39;
+  let down = _kc "ArrowDown" 40;
   let number_1 = _kc "1" 49;
   let number_2 = _kc "2" 50;
   let number_3 = _kc "3" 51;
@@ -100,3 +98,6 @@ module KeyCombos = {
 
 let get_keyCode (evt: Js.t Dom_html.keyboardEvent) =>
   Js.Optdef.get evt##.which (fun () => assert false);
+
+let get_key (evt: Js.t Dom_html.keyboardEvent) =>
+  Js.to_string (Js.Optdef.get evt##.key (fun () => assert false));

@@ -205,6 +205,12 @@ button:disabled {
 	border-bottom: 3px solid green;
 }
 
+.text-cursor {
+  white-space: pre;
+	background-color: #CCC;
+	border-bottom: 3px solid black;
+}
+
 .SIndentation {
   white-space: pre;
 	background-color: rgba(0, 0, 0, 0);

@@ -111,13 +111,14 @@ let view ((rs, rf): Model.rp) => {
   let expr_sdoc_rs =
     React.S.map
       (fun ((zexp, _), _) => Pretty.PP.sdoc_of_doc pp_view_width (PPView.of_zexp zexp)) rs;
-  let utext_of_expr_rs =
-    React.S.map (Util.compose UText.of_string Pretty.PP.string_of_sdoc) expr_sdoc_rs;
+  /* TODO unfactor this if it's only used once */
+  let utext_of_sdoc = Util.compose UText.of_string Pretty.PP.string_of_sdoc;
   let (proj_view_state_rs, proj_view_state_rf) = React.S.create HZ;
-  let state_after_update cur_state state_action utext_of_expr => {
+  let state_after_update cur_state state_action expr_sdoc => {
     /* TODO: does_it_match actually needs to return false if the tbox index isn't in a valid place. in this case, it should also tell us what HZ action to perform in order
        to appropriately update the hexp */
-    let does_it_match tbox => UText.compare (TextBox.getUText tbox) utext_of_expr == 0;
+    let utext_of_expr = utext_of_sdoc expr_sdoc;
+    let does_it_match tbox => utext_of_expr == TextBox.getUText tbox;
     let assert_matches tbox => {
       assert (does_it_match tbox);
       tbox
@@ -134,8 +135,13 @@ let view ((rs, rf): Model.rp) => {
     switch cur_state {
     | HZ =>
       switch state_action {
-      /* TODO set the proper index, not just 0 */
-      | Toggle => Textual (assert_matches (TextBox.create utext_of_expr 0))
+      | Toggle =>
+        let ind =
+          switch (Pretty.PP.sdoc_cursor_index expr_sdoc) {
+          | Some x => x
+          | None => assert false
+          };
+        Textual (assert_matches (TextBox.create utext_of_expr ind))
       | _ => HZ
       }
     | Textual tbox => update_view tbox tbox
@@ -144,7 +150,7 @@ let view ((rs, rf): Model.rp) => {
   };
   let perform_view_action a =>
     proj_view_state_rf (
-      state_after_update (React.S.value proj_view_state_rs) a (React.S.value utext_of_expr_rs)
+      state_after_update (React.S.value proj_view_state_rs) a (React.S.value expr_sdoc_rs)
     );
   let expr_view_styles_rs =
     React.S.map
@@ -168,88 +174,127 @@ let view ((rs, rf): Model.rp) => {
     Action_palette.make_palette (rs, rf) are_actions_enabled_rs;
   let _ =
     Js_util.listen_to
-      Dom_html.Event.keypress
+      Dom_html.Event.keydown
       Dom_html.document
       (
         fun evt => {
-          let evt_key = Js_util.get_keyCode evt;
+          let key_string = Js_util.get_key evt;
           let is_shift = Js.to_bool evt##.shiftKey;
           let is_ctrl = Js.to_bool evt##.ctrlKey;
-          let kcd = Js_util.KeyCombo.keyCode;
+          let kcs = Js_util.KeyCombo.to_string;
           module KCs = Js_util.KeyCombos;
-          let perform_view_action_f a => {
-            perform_view_action a;
-            Js._false
-          };
-          if is_ctrl {
-            Firebug.console##log evt_key;
-            Js._false
-          } else if (
-            is_shift && evt_key == kcd KCs.enter
-          ) {
+          let perform_view_action_f = Util.do_and_return perform_view_action Js._false;
+          if (is_shift && key_string == kcs KCs.enter) {
             perform_view_action_f Toggle
           } else if (
-            Hashtbl.mem hz_action_evt_handlers evt_key && React.S.value are_actions_enabled_rs
+            Hashtbl.mem hz_action_evt_handlers key_string && React.S.value are_actions_enabled_rs
           ) {
-            Hashtbl.find hz_action_evt_handlers evt_key evt
+            Hashtbl.find hz_action_evt_handlers key_string evt
           } else if (
-            evt_key == kcd KCs.esc || is_ctrl && evt_key == kcd KCs.open_bracket
+            key_string == kcs KCs.esc || is_ctrl && key_string == kcs KCs.open_bracket
           ) {
-            Firebug.console##log "pressed escape";
             perform_view_action_f DitchShadow
           } else if (
-            evt_key == kcd KCs.backspace
+            key_string == kcs KCs.backspace
           ) {
-            Firebug.console##log "pressed backspace";
             perform_view_action_f (TextAction TextBox.Backspace)
           } else if (
-            evt_key == kcd KCs.del
+            key_string == kcs KCs.del
           ) {
             perform_view_action_f (TextAction TextBox.Del)
           } else if (
-            evt_key == kcd KCs.newline || evt_key == kcd KCs.enter
+            key_string == kcs KCs.left
+          ) {
+            perform_view_action_f (TextAction TextBox.Left)
+          } else if (
+            key_string == kcs KCs.up
+          ) {
+            perform_view_action_f (TextAction TextBox.Up)
+          } else if (
+            key_string == kcs KCs.right
+          ) {
+            perform_view_action_f (TextAction TextBox.Right)
+          } else if (
+            key_string == kcs KCs.down
+          ) {
+            perform_view_action_f (TextAction TextBox.Down)
+          } else if (
+            key_string == kcs KCs.enter
           ) {
             perform_view_action_f (TextAction (TextBox.Insert '\n'))
           } else if (
-            evt_key > 31 && evt_key < 128
+            String.length key_string == 1
           ) {
-            perform_view_action_f (TextAction (TextBox.Insert (Char.chr evt_key)))
+            perform_view_action_f (TextAction (TextBox.Insert key_string.[0]))
           } else {
             Js._true
           }
         }
       );
   let expr_proj_view_rs =
-    React.S.map
+    React.S.l2
       (
-        fun sdoc =>
-          /* [
-             Html5.(
-               div
-                 a::[
-                   a_tabindex 0,
-                   a_onkeypress (
-                     fun evt => {
-                       let evt_key = Js_util.get_keyCode evt;
-                       if (evt_key == Js_util.KeyCombo.keyCode Js_util.KeyCombos.enter) {
-                         switch (React.S.value proj_mode_rs) {
-                         | HZ => proj_view_state_rf (Some (React.S.value utext_of_expr_rs, 0))
-                         | Textual => proj_view_state_rf (Some (UText.of_string " dog", 0))
-                         | Shadow => proj_view_state_rf None
-                         };
-                         false
-                       } else {
-                         true
+        fun sdoc proj_view_state =>
+          [
+            /* [
+               Html5.(
+                 div
+                   a::[
+                     a_tabindex 0,
+                     a_onkeypress (
+                       fun evt => {
+                         let evt_key = Js_util.get_keyCode evt;
+                         if (evt_key == Js_util.KeyCombo.keyCode Js_util.KeyCombos.enter) {
+                           switch (React.S.value proj_mode_rs) {
+                           | HZ => proj_view_state_rf (Some (React.S.value utext_of_expr_rs, 0))
+                           | Textual => proj_view_state_rf (Some (UText.of_string " dog", 0))
+                           | Shadow => proj_view_state_rf None
+                           };
+                           false
+                         } else {
+                           true
+                         }
                        }
-                     }
-                   )
-                 ]
-                 */
-          [Pretty.HTML_Of_SDoc.html_of_sdoc sdoc]
+                     )
+                   ]
+                   */
+            switch proj_view_state {
+            | HZ => Pretty.HTML_Of_SDoc.html_of_sdoc sdoc
+            | Textual tbox =>
+              Pretty.HTML_Of_SDoc.html_of_sdoc (
+                Pretty.PP.sdoc_with_text_cursor sdoc (TextBox.getIndex tbox)
+              )
+            | Shadow _ tbox =>
+              let uTxt = TextBox.getUText tbox;
+              let cInd = TextBox.getIndex tbox;
+              let to_string sInd eInd =>
+                CamomileLibrary.UTF8.init
+                  (eInd - sInd)
+                  (
+                    fun i => {
+                      let ind = sInd + i;
+                      assert (ind != cInd);
+                      UText.get uTxt ind
+                    }
+                  );
+              let cursor_string = CamomileLibrary.UTF8.init 1 (Util.const (UText.get uTxt cInd));
+              Html5.(
+                pre
+                  a::[a_class ["SDoc"]]
+                  [
+                    pcdata (to_string 0 cInd),
+                    span a::[a_class ["text-cursor"]] [pcdata cursor_string],
+                    pcdata (to_string (cInd + 1) (UText.length uTxt))
+                  ]
+              )
+            /*| Shadow _ tbox => Pretty.HTML_Of_SDoc.html_of_sdoc (Pretty.PP.sdoc_with_text_cursor sdoc (SText (Utext.to_string (TextBox.getUText tbox)) SEnd) (TextBox.getIndex tbox))*/
+            }
+          ]
           /* )
              ] */
       )
-      expr_sdoc_rs;
+      expr_sdoc_rs
+      proj_view_state_rs;
   let expr_proj_view_rhtml = R.Html5.div (ReactiveData.RList.from_signal expr_proj_view_rs);
   /* htype view */
   let htype_rs =
